@@ -1,126 +1,114 @@
 import discord
 from discord.ext import commands
+from flask import Flask
+import threading
 import os
 
-# ---- IDs deiner Log-Kanäle ----
-LOG_AUDIO_ID = 1353012344179134474
-LOG_MESSAGES_ID = 1352670497535426671
-LOG_MEMBER_ID = 1409630469192155197
-LOG_OTHER_ID = 1353159802913554473
-
+# ---- Bot Setup ----
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---- Hilfsfunktion für Embeds ----
-def make_embed(title, description, color=discord.Color.blue()):
-    embed = discord.Embed(title=title, description=description, color=color)
-    return embed
+# ---- Channel IDs ----
+LOG_AUDIO = 1353012344179134474
+LOG_MSG = 1352670497535426671
+LOG_MEMBER = 1409630469192155197
+LOG_OTHER = 1353159802913554473
 
-# ---- Wenn Bot startet ----
+# ---- Events ----
 @bot.event
 async def on_ready():
     print(f"Eingeloggt als {bot.user}")
 
-# ---- Audio-Logs ----
+# --- Member Join / Leave ---
+@bot.event
+async def on_member_join(member):
+    channel = bot.get_channel(LOG_MEMBER)
+    if channel:
+        # Prüfen ob der User schonmal da war (via joined_at + created_at Vergleich)
+        is_new = (member.joined_at == member.created_at)
+        embed = discord.Embed(title="👋 Mitglied beigetreten", color=discord.Color.green())
+        embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
+        embed.add_field(name="Account erstellt", value=member.created_at.strftime("%d.%m.%Y %H:%M:%S"), inline=False)
+        embed.add_field(name="Server beigetreten", value=member.joined_at.strftime("%d.%m.%Y %H:%M:%S"), inline=False)
+        roles = [role.mention for role in member.roles if role.name != "@everyone"]
+        embed.add_field(name="Rollen", value=", ".join(roles) if roles else "Keine", inline=False)
+        if is_new:
+            embed.set_footer(text="📌 Neues Mitglied auf Discord & Server")
+        else:
+            embed.set_footer(text="📌 Mitglied war schonmal auf Discord, aber neu auf diesem Server")
+        await channel.send(embed=embed)
+
+@bot.event
+async def on_member_remove(member):
+    channel = bot.get_channel(LOG_MEMBER)
+    if channel:
+        embed = discord.Embed(title="👋 Mitglied hat den Server verlassen", color=discord.Color.red())
+        embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
+        embed.add_field(name="Account erstellt", value=member.created_at.strftime("%d.%m.%Y %H:%M:%S"), inline=False)
+        roles = [role.mention for role in member.roles if role.name != "@everyone"]
+        embed.add_field(name="Rollen beim Verlassen", value=", ".join(roles) if roles else "Keine", inline=False)
+        await channel.send(embed=embed)
+
+# --- Voice Log ---
 @bot.event
 async def on_voice_state_update(member, before, after):
-    channel = bot.get_channel(LOG_AUDIO_ID)
+    channel = bot.get_channel(LOG_AUDIO)
+    if not channel:
+        return
 
     if before.channel != after.channel:
-        if after.channel:
-            await channel.send(embed=make_embed(
-                "Sprachkanal betreten",
-                f"{member.mention} hat **{after.channel}** betreten."
-            ))
-        elif before.channel:
-            await channel.send(embed=make_embed(
-                "Sprachkanal verlassen",
-                f"{member.mention} hat **{before.channel}** verlassen."
-            ))
+        if after.channel is not None:
+            embed = discord.Embed(title="🔊 Voice-Join", description=f"{member} ist {after.channel} beigetreten", color=discord.Color.green())
+            await channel.send(embed=embed)
+        elif before.channel is not None:
+            embed = discord.Embed(title="🔇 Voice-Leave", description=f"{member} hat {before.channel} verlassen", color=discord.Color.red())
+            await channel.send(embed=embed)
 
-    if before.mute != after.mute:
-        await channel.send(embed=make_embed(
-            "Mute-Status geändert",
-            f"{member.mention} wurde {'stummschalten' if after.mute else 'entstummt'}."
-        ))
-
-    if before.deaf != after.deaf:
-        await channel.send(embed=make_embed(
-            "Deaf-Status geändert",
-            f"{member.mention} wurde {'taub gestellt' if after.deaf else 'hörbar gemacht'}."
-        ))
-
-# ---- Nachrichten-Logs ----
+# --- Nachrichten Logs ---
 @bot.event
 async def on_message_delete(message):
     if message.author.bot:
         return
-    channel = bot.get_channel(LOG_MESSAGES_ID)
-    await channel.send(embed=make_embed(
-        "Nachricht gelöscht",
-        f"Von: {message.author.mention}\n"
-        f"In: {message.channel.mention}\n"
-        f"Inhalt: {message.content}"
-    ))
+    channel = bot.get_channel(LOG_MSG)
+    if channel:
+        embed = discord.Embed(title="🗑️ Nachricht gelöscht", color=discord.Color.red())
+        embed.add_field(name="Autor", value=message.author.mention, inline=True)
+        embed.add_field(name="Kanal", value=message.channel.mention, inline=True)
+        embed.add_field(name="Inhalt", value=message.content or "*leer*", inline=False)
+        await channel.send(embed=embed)
 
 @bot.event
 async def on_message_edit(before, after):
     if before.author.bot:
         return
-    channel = bot.get_channel(LOG_MESSAGES_ID)
-    await channel.send(embed=make_embed(
-        "Nachricht bearbeitet",
-        f"Von: {before.author.mention}\n"
-        f"In: {before.channel.mention}\n"
-        f"Vorher: {before.content}\n"
-        f"Nachher: {after.content}"
-    ))
+    channel = bot.get_channel(LOG_MSG)
+    if channel:
+        embed = discord.Embed(title="✏️ Nachricht bearbeitet", color=discord.Color.orange())
+        embed.add_field(name="Autor", value=before.author.mention, inline=True)
+        embed.add_field(name="Kanal", value=before.channel.mention, inline=True)
+        embed.add_field(name="Vorher", value=before.content or "*leer*", inline=False)
+        embed.add_field(name="Nachher", value=after.content or "*leer*", inline=False)
+        await channel.send(embed=embed)
 
-# ---- Member-Logs ----
-@bot.event
-async def on_member_join(member):
-    channel = bot.get_channel(LOG_MEMBER_ID)
-    if member.joined_at and member.created_at:
-        if (member.joined_at - member.created_at).days < 1:
-            info = "⚠️ Neuer Account (jünger als 1 Tag)"
-        else:
-            info = "Bestehender Account"
-    else:
-        info = "Unbekannt"
-    await channel.send(embed=make_embed(
-        "Mitglied beigetreten",
-        f"{member.mention} ist dem Server beigetreten.\n{info}"
-    ))
-
-@bot.event
-async def on_member_remove(member):
-    channel = bot.get_channel(LOG_MEMBER_ID)
-    await channel.send(embed=make_embed(
-        "Mitglied hat den Server verlassen",
-        f"{member} hat den Server verlassen."
-    ))
-
-# ---- Server-Änderungen (Rollen, Kanäle etc.) ----
+# --- Server Änderungen Logs (Rollen / Kanäle etc.) ---
 @bot.event
 async def on_guild_channel_update(before, after):
-    channel = bot.get_channel(LOG_OTHER_ID)
-    await channel.send(embed=make_embed(
-        "Kanal geändert",
-        f"Vorher: {before.name}\nNachher: {after.name}"
-    ))
+    channel = bot.get_channel(LOG_OTHER)
+    if channel:
+        embed = discord.Embed(title="⚙️ Kanal geändert", color=discord.Color.blurple())
+        embed.add_field(name="Vorher", value=before.name, inline=True)
+        embed.add_field(name="Nachher", value=after.name, inline=True)
+        await channel.send(embed=embed)
 
 @bot.event
 async def on_guild_role_update(before, after):
-    channel = bot.get_channel(LOG_OTHER_ID)
-    await channel.send(embed=make_embed(
-        "Rolle geändert",
-        f"Vorher: {before.name}\nNachher: {after.name}"
-    ))
+    channel = bot.get_channel(LOG_OTHER)
+    if channel:
+        embed = discord.Embed(title="🎭 Rolle geändert", color=discord.Color.blurple())
+        embed.add_field(name="Vorher", value=before.name, inline=True)
+        embed.add_field(name="Nachher", value=after.name, inline=True)
+        await channel.send(embed=embed)
 
-# ---- Start ----
-if __name__ == "__main__":
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    if TOKEN is None:
-        print("⚠️ Fehler: Bitte setze die Environment Variable DISCORD_TOKEN!")
-    else:
-        bot.run(TOKEN)
+# ---- Start Bot ----
+bot.run(os.getenv("DISCORD_TOKEN"))
+
