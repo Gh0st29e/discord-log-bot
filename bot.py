@@ -73,9 +73,14 @@ async def on_member_join(member: discord.Member):
         embed = discord.Embed(title="👋 Mitglied beigetreten", color=discord.Color.green())
         embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
         embed.add_field(name="Account erstellt am", value=member.created_at.strftime("%d.%m.%Y %H:%M"), inline=True)
-        # Hinweis: „war schon mal da“ lässt sich zuverlässig nur mit eigener DB loggen.
-        # Optionaler Platzhalter:
-        embed.add_field(name="Status", value="Neues Mitglied oder Wiedereintritt (ohne DB-Prüfung)", inline=False)
+
+        # Prüfen, ob der Account älter ist als der Beitritt
+        if member.created_at < member.joined_at:
+            status_text = "📌 Mitglied war schonmal auf Discord, aber neu auf diesem Server"
+        else:
+            status_text = "🆕 Ganz neues Discord-Mitglied"
+
+        embed.add_field(name="Status", value=status_text, inline=False)
         await channel.send(embed=embed)
 
 @bot.event
@@ -213,3 +218,4 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role):
 # ---- Start Bot ----
 keep_alive()
 bot.run(os.getenv("DISCORD_TOKEN"))
+
